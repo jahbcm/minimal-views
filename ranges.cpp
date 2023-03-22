@@ -37,15 +37,17 @@ class all_view;
 
 template<typename R>
 class all_view<R, std::enable_if_t<detail::is_range_v<R>>> : public base_view<all_view<R, std::enable_if_t<detail::is_range_v<R>>>> {
-    R* m_pRange{};
-    typename R::iterator m_begin, m_end;
+    using range_t = std::remove_reference_t<R>;
+    range_t* m_pRange{};
+    typename range_t::iterator m_begin, m_end;
 
     using base_t = base_view<all_view<R, std::enable_if_t<detail::is_range_v<R>>>> ;
 public:
-    using value_type = typename R::value_type;
-    using iterator = typename R::iterator;
+    using value_type = typename range_t::value_type;
+    using iterator = typename range_t::iterator;
 
-    all_view(R& r) noexcept : m_pRange{ &r }, m_begin{ r.begin() }, m_end{ r.end() } {}
+    template<typename T>
+    all_view(T&& r) noexcept : m_pRange{ &r }, m_begin{ r.begin() }, m_end{ r.end() } {}
 
     auto begin() const { return m_begin; }
     auto end() const { return m_end; }
@@ -64,7 +66,7 @@ public:
 
 private:
 
-    V* m_pView{};
+    V m_view{};
     iterator m_begin, m_end;
     pred_t m_pred;
 
@@ -92,7 +94,7 @@ public:
         }
 
         constexpr iterator& operator++() {
-            while ((m_iter != m_filter_view.m_pView->end()) and not(m_filter_view.m_pred(*++m_iter)));
+            while ((m_iter != m_filter_view.m_view.end()) and not(m_filter_view.m_pred(*++m_iter)));
             return *this;
         }
 
@@ -115,21 +117,21 @@ public:
         }
     };
 
-    constexpr filter_view(V& v, pred_t f) noexcept : m_pView{ &v }, m_begin{ iterator{ v.begin(), *this } }, m_end{ iterator{ v.end(), *this } }, m_pred{ std::move(f) } {
+    template<typename View>
+    constexpr filter_view(View&& v, pred_t f) noexcept : m_view{std::forward<View>(v)}, m_begin{ iterator{ v.begin(), *this } }, m_end{ iterator{ v.end(), *this } }, m_pred{ std::move(f) } {
         if (not(m_pred(*m_begin)))
             ++m_begin;
     }
 
     constexpr auto begin() const { return m_begin; }
     constexpr auto end() const { return m_end; }
-    constexpr auto underlying() const { return m_pView; }
+    constexpr const auto& underlying() const { return m_view; }
 };
 
 template<typename V, typename U>
 filter_view(V, U) -> filter_view<V, void>;
 
 
-/*
 template<typename Pred>
 struct filter_fn {
 
@@ -139,31 +141,29 @@ struct filter_fn {
     filter_fn(P p) : m_func{ std::move(p) } {}
 
     template<typename R>
-    constexpr auto operator()(R&& v) {
-        return filter_view<all_view<R>>{ std::forward<R>(v), std::move(m_func) };
+    constexpr auto operator()(R&& v) const {
+        return filter_view<all_view<R>>{ all_view<R>{ std::forward<R>(v) }, std::move(m_func) };
     }
 
     template<typename R>
-    friend constexpr auto operator|(R&& r, filter_fn  const& fn) {
+    friend constexpr auto operator|(R&& r, filter_fn const& fn) {
         return fn(std::forward<R>(r));
     }
 };
 
 template<typename Pred>
-filter_fn(Pred) -> filter_fn<Pred>;
-
-template<typename R>
-static constexpr auto filter = filter_fn<R>{};
-*/
+auto filter(Pred p) {
+    return filter_fn<Pred>{ std::move(p) };
+}
 
 int main() {
     std::cout << detail::is_range_v<std::vector<int>> << std::endl;
 
     std::vector v{ 1,2, 3,4,5,6,7,8,9 };
-    all_view allv{ v };
-    filter_view ff{ allv, [](int  i) { return i%2==0; } };
+    //all_view allv{ v };
+    //filter_view ff{ allv, [](int  i) { return i%2==0; } };
 
-    for (auto i : ff) {
+    for (auto i : v | filter([](int i) { return i % 2 == 0; })) {
         std::cout << i << "\n";
     }
 }
