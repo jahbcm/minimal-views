@@ -68,6 +68,18 @@ public:
         std::cout << "all_view on view\n";
     }
 
+    constexpr all_view(all_view const&) = delete;
+    constexpr all_view(all_view&& rhs) noexcept
+        : m_view{std::move(rhs.m_view)},
+        m_begin{std::move(rhs.m_begin)},
+        m_end{std::move(rhs.m_end)}
+    {
+        m_begin.m_view = &m_view;
+        m_end.m_view = &m_view;
+        std::cout << "All_view moved\n";
+    }
+
+
     constexpr auto begin() const { return m_begin; }
     constexpr auto end() const { return m_end; }
     constexpr auto cbegin() const { return m_begin; }
@@ -89,8 +101,8 @@ public:
 
 private:
     View m_view{};
-    iterator m_begin, m_end;
     pred_t m_pred;
+    iterator m_begin, m_end;
 
 public:
     class iterator {
@@ -101,13 +113,13 @@ public:
         using reference = value_type&;
         using iterator_category	= std::forward_iterator_tag;
 
+        filter_view* m_view{};
     private:
         typename View::iterator m_iter{};
-        filter_view const& m_filter_view;
 
     public:
         //constexpr iterator() = default;
-        constexpr iterator(typename View::iterator iter, filter_view const& f) :  m_iter{ iter }, m_filter_view{ f } {
+        constexpr iterator(typename View::iterator iter, filter_view* f) :  m_iter{ iter }, m_view{ f } {
         }
         
         constexpr value_type operator*() const {  // <-- const important!
@@ -115,9 +127,9 @@ public:
         }
 
         constexpr iterator& operator++() {
-            while (m_iter != m_filter_view.m_view.end()) {
+            while (m_iter != m_view->m_view.end()) {
                 ++m_iter;
-                if ((m_iter != m_filter_view.m_view.end()) and (m_filter_view.m_pred(*m_iter)))
+                if ((m_iter != m_view->m_view.end()) and (m_view->m_pred(*m_iter)))
                     break;
             };
             return *this;
@@ -147,35 +159,29 @@ public:
 
     using const_iterator = iterator;
 
-    template<typename View>
-    constexpr filter_view(View&& v, pred_t f) noexcept : 
-        m_view{std::forward<View>(v)}, 
-        m_begin{ iterator{ m_view.begin(), *this } }, 
-        m_end{ iterator{ m_view.end(), *this } }, 
-        m_pred{ std::move(f) }
+    template<typename V>
+    constexpr filter_view(V&& v, pred_t f) noexcept : 
+        m_view{std::forward<V>(v)}, 
+        m_pred{ std::move(f) },
+        m_begin{ iterator{ m_view.begin(), this } }, 
+        m_end{ iterator{ m_view.end(), this } } 
     {
         //static_assert(detail::is_view_v<std::remove_cv_t<std::remove_reference_t<View>>>, "Must be a view");
         if (not(m_pred(*m_begin)))
             ++m_begin;
     }
 
-    constexpr filter_view(filter_view const& rhs) :
-        m_view{rhs.m_view}, 
-        m_begin{ iterator{ m_view.begin(), *this } }, 
-        m_end{ iterator{ m_view.end(), *this } }, 
-        m_pred{ rhs.m_pred }
-    {
-        std::cout << "Copied\n";
-        if (not(m_pred(*m_begin)))
-            ++m_begin;
-    }
+    filter_view(filter_view const& rhs) = delete;
+
     constexpr filter_view(filter_view&& rhs) noexcept :
         m_view{std::move(rhs.m_view)}, 
-        m_begin{ iterator{ m_view.begin(), *this } }, 
-        m_end{ iterator{ m_view.end(), *this } }, 
-        m_pred{ std::move(rhs.m_pred) }
+        m_pred{ std::move(rhs.m_pred) },
+        m_begin{ iterator{ m_view.begin(), this } }, 
+        m_end{ iterator{ m_view.end(), this } } 
     {
         std::cout << "Moved\n";
+        m_begin.m_view = this;
+        m_end.m_view = this;
         if (not(m_pred(*m_begin)))
             ++m_begin;
     }
@@ -208,7 +214,7 @@ struct filter_fn {
     template<typename R>
     constexpr auto operator()(R&& v) const {
         using stripped_t = std::remove_cv_t<std::remove_reference_t<R>>;
-        return filter_view<all_view<stripped_t>>{ all_view<stripped_t>{ std::forward<R>(v) }, std::move(m_func) };
+        return filter_view<all_view<stripped_t>>{ all_view<stripped_t>{ std::forward<R>(v) }, /*std::move(*/m_func };
     }
 
     template<typename R>
