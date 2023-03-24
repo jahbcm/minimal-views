@@ -3,6 +3,8 @@
 #include <vector>
 #include <functional>
 
+struct view_base {};
+
 namespace detail {
     template<typename R, typename = void>
     struct is_range : std::false_type {};
@@ -20,36 +22,31 @@ namespace detail {
     struct is_view : std::false_type {};
 
     template<typename V>
-    struct is_view<V, std::void_t<std::enable_if_t<is_range_v<V>>, decltype(std::declval<V>().range())>>
+    struct is_view<V, std::enable_if_t<is_range_v<V> and std::is_base_of_v<view_base, V> and std::is_move_constructible_v<V>>>
         : std::true_type {};
         
     template<typename V>
     static constexpr auto is_view_v = is_view<V>::value;
 }
 
-template<typename Derived>
-class base_view {
-public:
-};
-
 template<typename R>
-class all_view : public base_view<all_view<R>> {
+class all_view : public view_base {
     R const* m_pRange{};
     typename R::iterator m_begin, m_end;
 
-    using base_t = base_view<all_view<R>>;
 public:
     using value_type = typename R::value_type;
     using iterator = typename R::iterator;
 
     template<typename T>
-    all_view(T&& r) noexcept : m_pRange{ &r }, m_begin{ r.begin() }, m_end{ r.end() } {
+    constexpr all_view(T&& r) noexcept : m_pRange{ &r }, m_begin{ r.begin() }, m_end{ r.end() } {
         static_assert(detail::is_range_v<std::remove_cv_t<std::remove_reference_t<T>>>, "Passed in type must be range");
     }
 
-    auto begin() const { return m_begin; }
-    auto end() const { return m_end; }
-    auto range() const { return m_pRange; }
+    constexpr auto begin() const { return m_begin; }
+    constexpr auto end() const { return m_end; }
+    constexpr auto size() const { return m_pRange->size(); }
+    constexpr auto range() const { return m_pRange; }
 };
 
 template<typename R>
@@ -57,10 +54,11 @@ all_view(R) -> all_view<R>;
 
 
 template<typename View>
-class filter_view {
+class filter_view : public view_base {
 public:
     class iterator;
     using pred_t = std::function<bool(typename View::value_type)>;
+    using value_type = typename View::value_type;
 
 private:
     View m_view{};
@@ -84,7 +82,7 @@ public:
         //constexpr iterator() = default;
         constexpr iterator(typename View::iterator iter, filter_view const& f) :  m_iter{ iter }, m_filter_view{ f } {
         }
-
+        
         constexpr value_type operator*() const {  // <-- const important!
             return *m_iter;
         }
@@ -115,17 +113,41 @@ public:
         constexpr bool operator==(typename View::iterator rhs) const {
             return m_iter == rhs;
         }
+        constexpr bool operator!=(typename View::iterator rhs) const {
+            return m_iter != rhs;
+        }
     };
 
     template<typename View>
-    constexpr filter_view(View&& v, pred_t f) noexcept : m_view{std::forward<View>(v)}, m_begin{ iterator{ v.begin(), *this } }, m_end{ iterator{ v.end(), *this } }, m_pred{ std::move(f) } {
+    constexpr filter_view(View&& v, pred_t f) noexcept : 
+        m_view{std::forward<View>(v)}, 
+        m_begin{ iterator{ m_view.begin(), *this } }, 
+        m_end{ iterator{ m_view.end(), *this } }, 
+        m_pred{ std::move(f) }
+    {
         static_assert(detail::is_view_v<std::remove_cv_t<std::remove_reference_t<View>>>, "Must be a view");
         if (not(m_pred(*m_begin)))
             ++m_begin;
     }
 
+    /*
+    constexpr filter_view(filter_view const& rhs) :
+        m_view{rhs.m_view}, 
+        m_begin{ iterator{ m_view.begin(), *this } }, 
+        m_end{ iterator{ m_view.end(), *this } }, 
+        m_pred{ rhs.m_pred }
+    {
+        std::cout << "Copied\n";
+    }
+    */
+    filter_view(filter_view const&) = delete;
+    filter_view& operator=(filter_view const&) = delete;
+    filter_view(filter_view&&) = delete;
+    filter_view& operator=(filter_view&&) = delete;
+
     constexpr auto begin() const { return m_begin; }
     constexpr auto end() const { return m_end; }
+    constexpr auto size() const { return m_view.size(); }
     constexpr const auto& underlying() const { return m_view; }
 };
 
@@ -158,11 +180,12 @@ auto filter(Pred p) {
 }
 
 int main() {
-    std::vector v{ 1,2, 3,4,5,6,7,8,9 };
+    std::vector v{ 1,2, 3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20 };
     //all_view allv{ v };
     //filter_view ff{ allv, [](int  i) { return i%2==0; } };
 
-    for (auto i : v | filter([](int i) { return i % 2 == 0; })) {
+    auto ppp = v | filter([](int i) { return i % 2 == 0; }) | filter([](int i) { return i > 10; });
+    for (auto i : ppp) {
         std::cout << i << "\n";
     }
 }
