@@ -32,22 +32,20 @@ class base_view {
 public:
 };
 
-template<typename R, typename = void>
-class all_view;
-
 template<typename R>
-class all_view<R, std::enable_if_t<detail::is_range_v<R>>> : public base_view<all_view<R, std::enable_if_t<detail::is_range_v<R>>>> {
-    using range_t = std::remove_reference_t<R>;
-    range_t* m_pRange{};
-    typename range_t::iterator m_begin, m_end;
+class all_view : public base_view<all_view<R>> {
+    R const* m_pRange{};
+    typename R::iterator m_begin, m_end;
 
-    using base_t = base_view<all_view<R, std::enable_if_t<detail::is_range_v<R>>>> ;
+    using base_t = base_view<all_view<R>>;
 public:
-    using value_type = typename range_t::value_type;
-    using iterator = typename range_t::iterator;
+    using value_type = typename R::value_type;
+    using iterator = typename R::iterator;
 
     template<typename T>
-    all_view(T&& r) noexcept : m_pRange{ &r }, m_begin{ r.begin() }, m_end{ r.end() } {}
+    all_view(T&& r) noexcept : m_pRange{ &r }, m_begin{ r.begin() }, m_end{ r.end() } {
+        static_assert(detail::is_range_v<std::remove_cv_t<std::remove_reference_t<T>>>, "Passed in type must be range");
+    }
 
     auto begin() const { return m_begin; }
     auto end() const { return m_end; }
@@ -55,38 +53,36 @@ public:
 };
 
 template<typename R>
-all_view(R) -> all_view<R, void>;
+all_view(R) -> all_view<R>;
 
 
-template<typename V, typename = std::enable_if_t<detail::is_view_v<V>>>
+template<typename View>
 class filter_view {
 public:
     class iterator;
-    using pred_t = std::function<bool(typename V::value_type)>;
+    using pred_t = std::function<bool(typename View::value_type)>;
 
 private:
-
-    V m_view{};
+    View m_view{};
     iterator m_begin, m_end;
     pred_t m_pred;
 
 public:
     class iterator {
-    public:
-        public: // <-- important
-        using difference_type = typename V::iterator::difference_type;
-        using value_type = typename V::iterator::value_type;
+    public: // <-- important
+        using difference_type = typename View::iterator::difference_type;
+        using value_type = typename View::iterator::value_type;
         using pointer = value_type*;
         using reference = value_type&;
         using iterator_category	= std::forward_iterator_tag;
 
     private:
-        typename V::iterator m_iter{};
+        typename View::iterator m_iter{};
         filter_view const& m_filter_view;
 
     public:
         //constexpr iterator() = default;
-        constexpr iterator(typename V::iterator iter, filter_view const& f) :  m_iter{ iter }, m_filter_view{ f } {
+        constexpr iterator(typename View::iterator iter, filter_view const& f) :  m_iter{ iter }, m_filter_view{ f } {
         }
 
         constexpr value_type operator*() const {  // <-- const important!
@@ -94,7 +90,11 @@ public:
         }
 
         constexpr iterator& operator++() {
-            while ((m_iter != m_filter_view.m_view.end()) and not(m_filter_view.m_pred(*++m_iter)));
+            while (m_iter != m_filter_view.m_view.end()) {
+                ++m_iter;
+                if ((m_iter != m_filter_view.m_view.end()) and (m_filter_view.m_pred(*m_iter)))
+                    break;
+            };
             return *this;
         }
 
@@ -112,13 +112,14 @@ public:
             return not(lhs.m_iter == rhs.m_iter);
         }
 
-        constexpr bool operator==(typename V::iterator rhs) const {
+        constexpr bool operator==(typename View::iterator rhs) const {
             return m_iter == rhs;
         }
     };
 
     template<typename View>
     constexpr filter_view(View&& v, pred_t f) noexcept : m_view{std::forward<View>(v)}, m_begin{ iterator{ v.begin(), *this } }, m_end{ iterator{ v.end(), *this } }, m_pred{ std::move(f) } {
+        static_assert(detail::is_view_v<std::remove_cv_t<std::remove_reference_t<View>>>, "Must be a view");
         if (not(m_pred(*m_begin)))
             ++m_begin;
     }
@@ -128,13 +129,12 @@ public:
     constexpr const auto& underlying() const { return m_view; }
 };
 
-template<typename V, typename U>
-filter_view(V, U) -> filter_view<V, void>;
+template<typename V>
+filter_view(V) -> filter_view<V>;
 
 
 template<typename Pred>
 struct filter_fn {
-
     Pred m_func{};
 
     template<typename P>
@@ -142,7 +142,8 @@ struct filter_fn {
 
     template<typename R>
     constexpr auto operator()(R&& v) const {
-        return filter_view<all_view<R>>{ all_view<R>{ std::forward<R>(v) }, std::move(m_func) };
+        using stripped_t = std::remove_cv_t<std::remove_reference_t<R>>;
+        return filter_view<all_view<stripped_t>>{ all_view<stripped_t>{ std::forward<R>(v) }, std::move(m_func) };
     }
 
     template<typename R>
@@ -157,8 +158,6 @@ auto filter(Pred p) {
 }
 
 int main() {
-    std::cout << detail::is_range_v<std::vector<int>> << std::endl;
-
     std::vector v{ 1,2, 3,4,5,6,7,8,9 };
     //all_view allv{ v };
     //filter_view ff{ allv, [](int  i) { return i%2==0; } };
