@@ -29,24 +29,51 @@ namespace detail {
     static constexpr auto is_view_v = is_view<V>::value;
 }
 
-template<typename R>
+template<typename R, typename = void>
 class all_view : public view_base {
-    R const* m_pRange{};
-    typename R::iterator m_begin, m_end;
+    R const& m_pRange{};
+    typename R::const_iterator m_begin, m_end;
 
 public:
     using value_type = typename R::value_type;
-    using iterator = typename R::iterator;
+    using iterator = typename R::const_iterator;
+    using const_iterator = typename R::const_iterator;
 
     template<typename T>
-    constexpr all_view(T&& r) noexcept : m_pRange{ &r }, m_begin{ r.begin() }, m_end{ r.end() } {
+    constexpr all_view(T&& r) noexcept : m_pRange{ r }, m_begin{ m_pRange.cbegin() }, m_end{ m_pRange.cend() } {
         static_assert(detail::is_range_v<std::remove_cv_t<std::remove_reference_t<T>>>, "Passed in type must be range");
+    }
+
+    //all_view(all_view const& rhs) {std::cout << "copied\n"; }
+
+    constexpr auto begin() const { return m_begin; }
+    constexpr auto end() const { return m_end; }
+    constexpr auto cbegin() const { return m_begin; }
+    constexpr auto cend() const { return m_end; }
+    constexpr auto size() const { return m_pRange->size(); }
+    constexpr auto range() const { return m_pRange; }
+};
+
+template<typename V>
+class all_view<V, std::enable_if_t<detail::is_view_v<V>>> {
+    V m_view{};
+    typename V::iterator m_begin, m_end;
+
+public:
+    using value_type = typename V::value_type;
+    using iterator = typename V::iterator;
+
+    template<typename T>
+    constexpr all_view(T&& r) noexcept : m_view{ std::forward<T>(r) }, m_begin{ m_view.begin() }, m_end{ m_view.end() } {
+        std::cout << "all_view on view\n";
     }
 
     constexpr auto begin() const { return m_begin; }
     constexpr auto end() const { return m_end; }
-    constexpr auto size() const { return m_pRange->size(); }
-    constexpr auto range() const { return m_pRange; }
+    constexpr auto cbegin() const { return m_begin; }
+    constexpr auto cend() const { return m_end; }
+    constexpr auto size() const { return m_view.size(); }
+    constexpr const auto& underlying() const { return m_view; }
 };
 
 template<typename R>
@@ -118,6 +145,8 @@ public:
         }
     };
 
+    using const_iterator = iterator;
+
     template<typename View>
     constexpr filter_view(View&& v, pred_t f) noexcept : 
         m_view{std::forward<View>(v)}, 
@@ -125,12 +154,11 @@ public:
         m_end{ iterator{ m_view.end(), *this } }, 
         m_pred{ std::move(f) }
     {
-        static_assert(detail::is_view_v<std::remove_cv_t<std::remove_reference_t<View>>>, "Must be a view");
+        //static_assert(detail::is_view_v<std::remove_cv_t<std::remove_reference_t<View>>>, "Must be a view");
         if (not(m_pred(*m_begin)))
             ++m_begin;
     }
 
-    /*
     constexpr filter_view(filter_view const& rhs) :
         m_view{rhs.m_view}, 
         m_begin{ iterator{ m_view.begin(), *this } }, 
@@ -138,15 +166,30 @@ public:
         m_pred{ rhs.m_pred }
     {
         std::cout << "Copied\n";
+        if (not(m_pred(*m_begin)))
+            ++m_begin;
     }
-    */
+    constexpr filter_view(filter_view&& rhs) noexcept :
+        m_view{std::move(rhs.m_view)}, 
+        m_begin{ iterator{ m_view.begin(), *this } }, 
+        m_end{ iterator{ m_view.end(), *this } }, 
+        m_pred{ std::move(rhs.m_pred) }
+    {
+        std::cout << "Moved\n";
+        if (not(m_pred(*m_begin)))
+            ++m_begin;
+    }
+    /*
     filter_view(filter_view const&) = delete;
     filter_view& operator=(filter_view const&) = delete;
     filter_view(filter_view&&) = delete;
     filter_view& operator=(filter_view&&) = delete;
+    */
 
     constexpr auto begin() const { return m_begin; }
     constexpr auto end() const { return m_end; }
+    constexpr auto cbegin() const { return m_begin; }
+    constexpr auto cend() const { return m_end; }
     constexpr auto size() const { return m_view.size(); }
     constexpr const auto& underlying() const { return m_view; }
 };
