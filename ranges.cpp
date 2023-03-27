@@ -71,8 +71,8 @@ public:
     constexpr all_view(all_view const&) = delete;
     constexpr all_view(all_view&& rhs) noexcept
         : m_view{std::move(rhs.m_view)},
-        m_begin{std::move(rhs.m_begin)},
-        m_end{std::move(rhs.m_end)}
+        m_begin{m_view.begin()},
+        m_end{m_view.end()}
     {
         m_begin.m_view = &m_view;
         m_end.m_view = &m_view;
