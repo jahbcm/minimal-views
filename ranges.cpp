@@ -492,177 +492,165 @@ constexpr auto transform(Func p) {
 /* views. Provides tuples of corresponding*/
 /* elements.							  */	
 /******************************************/
-class zip_base {
-public:
-    struct sentinel {};
-};
-template<typename... Views>
-class zip_view : public view_base, public zip_base {
-public:
-    class iterator;
-    using value_type = std::tuple<typename Views::iterator::reference...>;
+	class zip_base {
+	public:
+		struct sentinel {};
+	};
+	template<typename... Views>
+	class zip_view : public view_base, public zip_base {
+	public:
+		class iterator;
+		using value_type = std::tuple<typename Views::iterator::reference...>;
 
-private:
-    std::tuple<Views...> m_views{};
-    iterator m_begin, m_end;
+	private:
+		std::tuple<Views...> m_views{};
+		iterator m_begin;
 
-    template<bool MakeBegin, std::size_t... Is>
-    constexpr auto _makeBeginOrEndIter(std::index_sequence<Is...>) {
-        if constexpr (MakeBegin)
-            return iterator{ std::make_tuple(std::get<Is>(m_views).begin()...), this };
-        else
-            return iterator{ std::make_tuple(std::get<Is>(m_views).end()...), this };
-    }
+		template<std::size_t... Is>
+		constexpr auto _makeBeginIterImpl(std::index_sequence<Is...>) {
+			return iterator{ std::make_tuple(std::get<Is>(m_views).begin()...), this };
+		}
 
-    constexpr auto _makeBeginIter() {
-        return _makeBeginOrEndIter<true>(std::index_sequence_for<Views...>{});
-    }
-    constexpr auto _makeEndIter() {
-        return _makeBeginOrEndIter<false>(std::index_sequence_for<Views...>{});
-    }
+		constexpr auto _makeBeginIter() {
+			return _makeBeginIterImpl(std::index_sequence_for<Views...>{});
+		}
 
-public:
-    class iterator {
-    public: // <-- important
-        using difference_type = std::ptrdiff_t;
-        using value_type = std::tuple<typename Views::iterator::reference...>;
-        using pointer = value_type*;
-        using reference = value_type&;
-        using iterator_category = std::forward_iterator_tag;
+	public:
+		class iterator {
+		public: // <-- important
+			using difference_type = std::ptrdiff_t;
+			using value_type = std::tuple<typename Views::iterator::reference...>;
+			using pointer = value_type*;
+			using reference = value_type&;
+			using iterator_category = std::forward_iterator_tag;
 
-        zip_view* m_view{};
-    private:
-        using underlying_iterator = std::tuple<typename Views::iterator...>;
-        underlying_iterator m_iter{};
+			zip_view* m_view{};
+		private:
+			using underlying_iterator = std::tuple<typename Views::iterator...>;
+		 	underlying_iterator m_iter{};
 
 
-        template<std::size_t... Is>
-        constexpr auto _dereference(std::index_sequence<Is...>) const {
-            return value_type{ *std::get<Is>(m_iter)... };
-        }
-        template<std::size_t... Is>
-        constexpr void _advanceIter(std::index_sequence<Is...>) {
-            (++std::get<Is>(m_iter), ...);
-        }
-        template<std::size_t... Is>
-        constexpr auto _compareEqual(iterator const& rhs, std::index_sequence<Is...>) const {
-            return ((std::get<Is>(m_iter) == std::get<Is>(rhs.m_iter)) && ...);
-        }
-        template<std::size_t... Is>
-        constexpr auto _checkEnd(std::index_sequence<Is...>) const {
-            return ((std::get<Is>(m_iter) == std::get<Is>(m_view->m_views).end()) || ...);
-        }
+			template<std::size_t... Is>
+			constexpr auto _dereference(std::index_sequence<Is...>) const {
+				return value_type{ *std::get<Is>(m_iter)... };
+			}
+			template<std::size_t... Is>
+			constexpr void _advanceIter(std::index_sequence<Is...>) {
+				(++std::get<Is>(m_iter), ...);
+			}
+			template<std::size_t... Is>
+			constexpr auto _compareEqual(iterator const& rhs, std::index_sequence<Is...>) const {
+				return ((std::get<Is>(m_iter) == std::get<Is>(rhs.m_iter)) && ...);
+			}
+			template<std::size_t... Is>
+			constexpr auto _checkEnd(std::index_sequence<Is...>) const {
+				return ((std::get<Is>(m_iter) == std::get<Is>(m_view->m_views).end()) || ...);
+			}
 
-    public:
-        //constexpr iterator() = default;
-        constexpr iterator(underlying_iterator iter, zip_view* f) : m_iter{ iter }, m_view{ f } {
-        }
+		public:
+			//constexpr iterator() = default;
+			constexpr iterator(underlying_iterator iter, zip_view* f) : m_iter{ iter }, m_view{ f } {
+			}
 
-        constexpr value_type operator*() const {  // <-- const important!
-            return _dereference(std::index_sequence_for<Views...>{});
-        }
+			constexpr value_type operator*() const {  // <-- const important!
+				return _dereference(std::index_sequence_for<Views...>{});
+			}
 
-        constexpr iterator& operator++() {
-            _advanceIter(std::index_sequence_for<Views...>{});
-            return *this;
-        }
+			constexpr iterator& operator++() {
+				_advanceIter(std::index_sequence_for<Views...>{});
+				return *this;
+			}
 
-        constexpr iterator operator++(int) const {
-            auto ret = *this;
-            ++(*this);
-            return ret;
-        }
+			constexpr iterator operator++(int) const {
+				auto ret = *this;
+				++(*this);
+				return ret;
+			}
 
-        // Must be friend
-        friend PRS_VIEWS_CONSTEXPR bool operator==(iterator const& lhs, iterator const& rhs) noexcept {
-            return lhs._compareEqual(rhs, std::index_sequence_for<Views...>{});
-        }
-        friend PRS_VIEWS_CONSTEXPR bool operator!=(iterator const& lhs, iterator const& rhs) noexcept {
-            return !(lhs.m_iter == rhs.m_iter);
-        }
+			// Must be friend
+			friend PRS_VIEWS_CONSTEXPR bool operator==(iterator const& lhs, iterator const& rhs) noexcept {
+				return lhs._compareEqual(rhs, std::index_sequence_for<Views...>{});
+			}
+			friend PRS_VIEWS_CONSTEXPR bool operator!=(iterator const& lhs, iterator const& rhs) noexcept {
+				return !(lhs.m_iter == rhs.m_iter);
+			}
 
-        constexpr auto operator!=(zip_base::sentinel) const noexcept {
-            return !_checkEnd(std::index_sequence_for<Views...>{});
-        }
+			constexpr auto operator!=(zip_base::sentinel) const noexcept {
+				return !_checkEnd(std::index_sequence_for<Views...>{});
+			}
 
-        /*
-        constexpr bool operator==(typename View::iterator rhs) const {
-            return m_iter == rhs;
-        }
-        constexpr bool operator!=(typename View::iterator rhs) const {
-            return m_iter != rhs;
-        }
-        */
-    };
+			/*
+			constexpr bool operator==(typename View::iterator rhs) const {
+				return m_iter == rhs;
+			}
+			constexpr bool operator!=(typename View::iterator rhs) const {
+				return m_iter != rhs;
+			}
+			*/
+		};
 
-    template<typename... V>
-    constexpr zip_view(V&&... v) noexcept :
-        m_views{ std::forward<V>(v)... },
-        m_begin{ _makeBeginIter() },
-        m_end{ _makeEndIter() }
-    {
-        static_assert((detail::is_view_v<V> && ...), "zip_view can only be constructed from views!");
-    }
+		template<typename... V>
+		constexpr zip_view(V&&... v) noexcept :
+			m_views{ std::forward<V>(v)... },
+			m_begin{ _makeBeginIter() }
+		{
+			static_assert((detail::is_view_v<V> && ...), "zip_view can only be constructed from views!");
+		}
 
-    constexpr zip_view(zip_view const& rhs)
-        : m_views{ rhs.m_views },
-        m_begin{ _makeBeginIter() },
-        m_end{ _makeEndIter() }
-    {}
-    constexpr zip_view& operator=(zip_view const& rhs) {
-        zip_view copy{ rhs };
-        copy.swap(*this);
-        return *this;
-    }
-    constexpr zip_view(zip_view&& rhs) noexcept :
-        m_views{ std::move(rhs.m_views) },
-        m_begin{ _makeBeginIter() },
-        m_end{ _makeEndIter() }
-    {}
-    constexpr zip_view& operator=(zip_view&& rhs) noexcept {
-        zip_view copy{ std::move(rhs) };
-        copy.swap(*this);
-        return *this;
-    }
-    ~zip_view() = default;
+		constexpr zip_view(zip_view const& rhs)
+			: m_views{ rhs.m_views },
+			m_begin{ _makeBeginIter() }
+		{}
+		constexpr zip_view& operator=(zip_view const& rhs) {
+			zip_view copy{ rhs };
+			copy.swap(*this);
+			return *this;
+		}
+		constexpr zip_view(zip_view&& rhs) noexcept :
+			m_views{ std::move(rhs.m_views) },
+			m_begin{ _makeBeginIter() }
+		{}
+		constexpr zip_view& operator=(zip_view&& rhs) noexcept {
+			zip_view copy{ std::move(rhs) };
+			copy.swap(*this);
+			return *this;
+		}
+		~zip_view() = default;
 
-    friend constexpr void swap(zip_view& lhs, zip_view& rhs) noexcept {
-        using std::swap;
-        swap(lhs.m_views, rhs.m_views);
-        swap(lhs.m_begin, rhs.m_begin);
-        swap(lhs.m_end, rhs.m_end);
-        lhs.m_begin.m_view = std::addressof(lhs);
-        lhs.m_end.m_view = std::addressof(lhs);
-        rhs.m_begin.m_view = std::addressof(rhs);
-        rhs.m_end.m_view = std::addressof(rhs);
-    }
+		friend constexpr void swap(zip_view& lhs, zip_view& rhs) noexcept {
+			using std::swap;
+			swap(lhs.m_views, rhs.m_views);
+			swap(lhs.m_begin, rhs.m_begin);
+			lhs.m_begin.m_view = std::addressof(lhs);
+			rhs.m_begin.m_view = std::addressof(rhs);
+		}
 
-    constexpr auto begin() const { return m_begin; }
-    constexpr auto end() const { return sentinel{}; }
-    constexpr const auto& underlying() const { return m_views; }
-};
+		constexpr auto begin() const { return m_begin; }
+		constexpr auto end() const { return sentinel{}; }
+		constexpr const auto& underlying() const { return m_views; }
+	};
 
-template<typename... V>
-zip_view(V...) -> zip_view<V...>;
+	template<typename... V>
+	zip_view(V...) -> zip_view<V...>;
 
 
-struct zip_fn {
-    template<typename... Views>
-    constexpr auto operator()(Views&&... v) const {
-        return zip_view<all_view<std::remove_reference_t<Views>>...>{ all_view<std::remove_reference_t<Views>>{ std::forward<Views>(v) }... };
-    }
+	struct zip_fn {
+		template<typename... Views>
+		constexpr auto operator()(Views&&... v) const {
+			return zip_view<all_view<std::remove_reference_t<Views>>...>{ all_view<std::remove_reference_t<Views>>{ std::forward<Views>(v) }... };
+		}
 
-    /*
-    * Seemingly pointless now
-    *
-        template<typename R>
-        friend constexpr auto operator|(R&& r, zip_fn const& fn) {
-            return fn(std::forward<R>(r));
-        }
-    */
-};
+		/*
+		* Seemingly pointless now
+		*
+			template<typename R>
+			friend constexpr auto operator|(R&& r, zip_fn const& fn) {
+				return fn(std::forward<R>(r));
+			}
+		*/
+	};
 
-static inline constexpr auto zip = zip_fn{};
+	static inline constexpr auto zip = zip_fn{};
 
 /******************************************/
 
@@ -681,4 +669,11 @@ int main() {
     for (auto const& [i,j] : ppp) {
         std::cout << i << "," << j <<"\n";
     }
+
+    std::vector<int> ar1{ 1,2,3};
+    std::vector<int> ar2{ 4,5,6};
+    for (auto [a,b] : zip(ar1,ar2)) {
+        std::cout << a << " " << b << "\n";
+    }
+    
 }
