@@ -22,7 +22,7 @@ namespace detail {
     struct is_view : std::false_type {};
 
     template<typename V>
-    struct is_view<V, std::enable_if_t<is_range_v<V> and std::is_base_of_v<view_base, V> and std::is_move_constructible_v<V>>>
+    struct is_view<V, std::enable_if_t<is_range_v<V> && std::is_base_of_v<view_base, V> && std::is_move_constructible_v<V>>>
         : std::true_type {};
         
     template<typename V>
@@ -269,6 +269,155 @@ constexpr auto filter(Pred p) {
 }
 /******************************************/
 
+/******************************************/
+/* transform_view                         */
+/******************************************/
+template<typename View, typename ResultType>
+class transform_view : public view_base {
+public:
+    class iterator;
+    using transform_func_t = std::function<ResultType(typename View::value_type)>;
+    using value_type = typename View::value_type;
+
+private:
+    View m_view{};
+    transform_func_t m_func;
+    iterator m_begin, m_end;
+
+public:
+    class iterator {
+    public: // <-- important
+        using difference_type = typename View::iterator::difference_type;
+        using value_type = typename View::iterator::value_type;
+        using pointer = value_type*;
+        using reference = value_type&;
+        using iterator_category	= std::forward_iterator_tag;
+
+        transform_view* m_view{};
+    private:
+        typename View::iterator m_iter{};
+
+    public:
+        //constexpr iterator() = default;
+        constexpr iterator(typename View::iterator iter, transform_view* f) :  m_iter{ iter }, m_view{ f } {
+        }
+        
+        constexpr ResultType operator*() const {  // <-- const important!
+            return m_view->m_func(*m_iter);
+        }
+
+        constexpr iterator& operator++() {
+            ++m_iter;
+            return *this;
+        }
+
+        constexpr iterator operator++(int) const {
+            auto ret = *this;
+            ++(*this);
+            return ret;
+        }
+
+        // Must be friend
+        friend constexpr bool operator==(iterator const& lhs, iterator const& rhs) noexcept {
+            return lhs.m_iter == rhs.m_iter;
+        }
+        friend constexpr bool operator!=(iterator const& lhs, iterator const& rhs) noexcept {
+            return not(lhs.m_iter == rhs.m_iter);
+        }
+
+        constexpr bool operator==(typename View::iterator rhs) const {
+            return m_iter == rhs;
+        }
+        constexpr bool operator!=(typename View::iterator rhs) const {
+            return m_iter != rhs;
+        }
+    };
+
+    using const_iterator = iterator;
+
+    template<typename V, typename = std::enable_if_t<not std::is_same_v<std::remove_cv_t<std::remove_reference_t<V>>, transform_view>>>
+    constexpr transform_view(V&& v, transform_func_t f) noexcept : 
+        m_view{std::forward<V>(v)}, 
+        m_func{ std::move(f) },
+        m_begin{ iterator{ m_view.begin(), this } }, 
+        m_end{ iterator{ m_view.end(), this } } 
+    {
+        static_assert(detail::is_view_v<V>, "transform_view can only be constructed from a view!");
+    }
+
+    constexpr transform_view(transform_view const& rhs)
+        : m_view{ rhs.m_view },
+        m_func{ rhs.m_func },
+        m_begin{ iterator{ m_view.begin(), this } },
+        m_end{ iterator{ m_view.end(), this } }
+    {}
+    constexpr transform_view& operator=(transform_view const& rhs) {
+        transform_view copy{ rhs };
+        copy.swap(*this);
+        return *this;
+    }
+    constexpr transform_view(transform_view&& rhs) noexcept :
+        m_view{std::move(rhs.m_view)}, 
+        m_func{ std::move(rhs.m_func) },
+        m_begin{ iterator{ m_view.begin(), this } }, 
+        m_end{ iterator{ m_view.end(), this } } 
+    {
+    }
+    constexpr transform_view& operator=(transform_view&& rhs) noexcept {
+        transform_view copy{ std::move(rhs) };
+        copy.swap(*this);
+        return *this;
+    }
+    ~transform_view() = default;
+
+    friend constexpr void swap(transform_view& lhs, transform_view& rhs) noexcept {
+        using std::swap;
+        swap(lhs.m_view, rhs.m_view);
+        swap(lhs.m_func, rhs.m_func);
+        swap(lhs.m_begin, rhs.m_begin);
+        swap(lhs.m_end, rhs.m_end);
+        lhs.m_begin.m_view = std::addressof(lhs);
+        lhs.m_end.m_view = std::addressof(lhs);
+        rhs.m_begin.m_view = std::addressof(rhs);
+        rhs.m_end.m_view = std::addressof(rhs);
+    }
+
+    constexpr auto begin() const { return cbegin(); }
+    constexpr auto end() const { return cend(); }
+    constexpr auto cbegin() const { return m_begin; }
+    constexpr auto cend() const { return m_end; }
+    constexpr const auto& underlying() const { return m_view; }
+};
+
+template<typename V, typename F>
+transform_view(V, F) -> transform_view<V, F>;
+
+
+template<typename Func>
+struct transform_fn {
+    Func m_func{};
+
+    template<typename F>
+    constexpr transform_fn(F f) : m_func{ std::move(f) } {}
+
+    template<typename View>
+    constexpr auto operator()(View&& v) const {
+        using stripped_t = std::remove_cv_t<std::remove_reference_t<View>>;
+        return transform_view<all_view<stripped_t>, std::invoke_result_t<Func, View::value_type>>{ all_view<stripped_t>{ std::forward<View>(v) }, m_func };
+    }
+
+    template<typename R>
+    friend constexpr auto operator|(R&& r, transform_fn const& fn) {
+        return fn(std::forward<R>(r));
+    }
+};
+
+template<typename Func>
+constexpr auto transform(Func p) {
+    return transform_fn<Func>{ std::move(p) };
+}
+/******************************************/
+
 
 int main() {
     std::vector<int> v{ 1,2, 3,4,5,6,7,8,9,10,11,12,13,14,14,15,16,17,18,19,20 };
@@ -280,16 +429,9 @@ int main() {
         filter([](int i) { return i > 10; }) |
         filter([](int i) { return i < 16; }) |
         filter([](int i) { return i == 14; }) |
-        filter([](int i) { return i == 14; });
-    auto ppp2 = v | 
-        filter([](int i) { return i % 2 == 0; }) |
-        filter([](int i) { return i > 10; }) |
-        filter([](int i) { return i < 18; }) |
-        filter([](int i) { return i == 16; }) |
-        filter([](int i) { return i == 16; });
-    swap(ppp,ppp2);
-    auto x3 = ppp;
-    for (auto i : x3) {
-        std::cout << i << "\n";
+        filter([](int i) { return i == 14; }) |
+        transform([](int i) { return std::make_pair(i*2,i*2); });
+    for (auto const& [i,j] : ppp) {
+        std::cout << i << "," << j <<"\n";
     }
 }
