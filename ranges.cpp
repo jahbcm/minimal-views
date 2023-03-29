@@ -666,6 +666,165 @@ static inline constexpr auto zip = zip_fn{};
 
 /******************************************/
 
+/******************************************/
+/* transform_view                         */
+/* Iterates over all elements of a view   */
+/* and performs the given transformation  */
+/* on each element, thereby providing a	  */
+/* transformed view of the input range    */
+/******************************************/
+template<typename View>
+class inverse_view : public view_base {
+public:
+    class iterator;
+    //using inverse_func_t = std::function<ResultType(typename View::value_type&)>;
+    using value_type = typename View::value_type;
+
+private:
+    View m_view{};
+    //inverse_func_t m_func;
+    iterator m_begin, m_end;
+
+public:
+    class iterator {
+    public: // <-- important
+        using difference_type = typename View::iterator::difference_type;
+        using value_type = typename View::value_type;
+        using pointer = value_type*;
+        using reference = value_type&;
+        using iterator_category	= std::forward_iterator_tag;
+
+        inverse_view* m_view{};
+    private:
+        typename View::iterator m_iter{};
+
+    public:
+        //constexpr iterator() = default;
+        constexpr iterator(typename View::iterator iter, inverse_view* f) :  m_iter{ iter }, m_view{ f } {
+        }
+        
+        constexpr reference operator*() const {  // <-- const important!
+            return *m_iter;
+        }
+
+        constexpr iterator& operator++() {
+            --m_iter;
+            return *this;
+        }
+
+        constexpr iterator operator++(int) const {
+            auto ret = *this;
+            --(*this);
+            return ret;
+        }
+
+        // Must be friend
+        friend PRS_VIEWS_CONSTEXPR bool operator==(iterator const& lhs, iterator const& rhs) noexcept {
+            return lhs.m_iter == rhs.m_iter;
+        }
+        friend PRS_VIEWS_CONSTEXPR bool operator!=(iterator const& lhs, iterator const& rhs) noexcept {
+            return !(lhs.m_iter == rhs.m_iter);
+        }
+
+        constexpr bool operator==(typename View::iterator rhs) const {
+            return m_iter == rhs;
+        }
+        constexpr bool operator!=(typename View::iterator rhs) const {
+            return m_iter != rhs;
+        }
+    };
+
+    template<typename V, typename = std::enable_if_t<!std::is_same_v<std::remove_cv_t<std::remove_reference_t<V>>, inverse_view>>>
+    constexpr inverse_view(V&& v) noexcept : 
+        m_view{std::forward<V>(v)}, 
+        //m_func{ std::move(f) },
+        m_begin{ iterator{ --m_view.end(), this } }, 
+        m_end{ iterator{ --m_view.begin(), this } } 
+    {
+        static_assert(detail::is_view_v<V>, "inverse_view can only be constructed from a view!");
+    }
+
+    constexpr inverse_view(inverse_view const& rhs)
+        : m_view{ rhs.m_view },
+        //m_func{ rhs.m_func },
+        m_begin{ iterator{ --m_view.end(), this } },
+        m_end{ iterator{ --m_view.begin(), this } }
+    {}
+    constexpr inverse_view& operator=(inverse_view const& rhs) {
+        inverse_view copy{ rhs };
+        copy.swap(*this);
+        return *this;
+    }
+    constexpr inverse_view(inverse_view&& rhs) noexcept :
+        m_view{std::move(rhs.m_view)}, 
+        //m_func{ std::move(rhs.m_func) },
+        m_begin{ iterator{ m_view.begin(), this } }, 
+        m_end{ iterator{ m_view.end(), this } } 
+    {
+    }
+    constexpr inverse_view& operator=(inverse_view&& rhs) noexcept {
+        inverse_view copy{ std::move(rhs) };
+        copy.swap(*this);
+        return *this;
+    }
+    ~inverse_view() = default;
+
+    friend constexpr void swap(inverse_view& lhs, inverse_view& rhs) noexcept {
+        using std::swap;
+        swap(lhs.m_view, rhs.m_view);
+        //swap(lhs.m_func, rhs.m_func);
+        swap(lhs.m_begin, rhs.m_begin);
+        swap(lhs.m_end, rhs.m_end);
+        lhs.m_begin.m_view = std::addressof(lhs);
+        lhs.m_end.m_view = std::addressof(lhs);
+        rhs.m_begin.m_view = std::addressof(rhs);
+        rhs.m_end.m_view = std::addressof(rhs);
+    }
+
+    constexpr auto begin() const { return m_begin; }
+    constexpr auto end() const { return m_end; }
+    constexpr const auto& underlying() const { return m_view; }
+};
+
+template<typename V>
+inverse_view(V) -> inverse_view<V>;
+
+
+//template<typename Func>
+struct inverse_fn {
+    //Func m_func{};
+
+    //template<typename F>
+    constexpr inverse_fn() {}
+
+    template<typename View>
+    constexpr auto operator()(View&& v) const& {
+        using stripped_t = std::remove_reference_t<View>;
+        return inverse_view<all_view<stripped_t>>{ all_view<stripped_t>{ std::forward<View>(v) }};
+    }
+    template<typename View>
+    constexpr auto operator()(View&& v) && {
+        using stripped_t = std::remove_reference_t<View>;
+        return inverse_view<all_view<stripped_t>>{ all_view<stripped_t>{ std::forward<View>(v) }};
+    }
+
+    template<typename R>
+    friend constexpr auto operator|(R&& r, inverse_fn const& fn) {
+        return fn(std::forward<R>(r));
+    }
+    template<typename R>
+    friend constexpr auto operator|(R&& r, inverse_fn&& fn) {
+        return std::move(fn)(std::forward<R>(r));
+    }
+};
+
+//template<typename Func>
+constexpr auto inverse() {
+    return inverse_fn{ };
+}
+
+/******************************************/
+
 int main() {
     std::vector<int> v{ 1,2, 3,4,5,6,7,8,9,10,11,12,13,14,14,15,16,17,18,19,20 };
     //all_view allv{ v };
