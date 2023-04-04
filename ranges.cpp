@@ -11,6 +11,7 @@
 #endif
 
 struct view_base {};
+struct view_range {};
 
 namespace detail {
     template<typename R, typename = void>
@@ -46,6 +47,27 @@ namespace detail {
 
     template<typename V>
     static constexpr auto is_view_v = is_view<V>::value;
+
+    template<typename V, typename = void>
+    struct is_range_view : std::false_type {};
+
+    /* 
+        A range view must:
+        - be a range
+        - be derived from view_range
+        - be move constructible
+        - have the member types iterator and value_type
+    */
+    template<typename V>
+    struct is_range_view<V, std::enable_if_t<
+        is_range<V>::value &&
+        std::is_base_of_v<view_range, V> &&
+        std::is_move_constructible_v<V>
+    , std::void_t<typename V::iterator, typename V::value_type>>>
+        : std::true_type {};
+
+    template<typename V>
+    static constexpr auto is_range_view_v = is_range_view<V>::value;
 }
 
 /******************************************/
@@ -57,7 +79,7 @@ namespace detail {
 /* require views as input				  */			
 /******************************************/
 template<typename R, typename = void>
-class all_view : public view_base {
+class all_view : public view_base, public view_range {
 public:
     using iterator = std::conditional_t<std::is_const_v<R>, typename R::const_iterator, typename R::iterator>;
 private:
@@ -484,6 +506,208 @@ constexpr auto transform(Func p) {
 }
 /******************************************/
 
+/******************************************/
+/* startAt_view                         */
+/* Iterates over all elements of a view   */
+/* starting in the first element which   */
+/* matches the function, and ending in	  */
+/* the element just before the matching one    */
+/******************************************/
+template<typename View>
+class startAt_view : public view_base {
+public:
+    class iterator;
+    using startAt_func_t = std::function<bool(typename View::value_type&)>;
+    using value_type = typename View::value_type;
+    using pointer = value_type*;
+    using reference = value_type&;
+
+private:
+    View m_view{};
+    startAt_func_t m_func;
+    iterator m_begin, m_end;
+    std::optional<iterator> m_start, m_finish;
+
+public:
+    // Circular iterator
+    class iterator {
+    public: // <-- important
+        using difference_type = typename View::iterator::difference_type;
+        using value_type = typename View::value_type;
+        using pointer = value_type*;
+        using reference = value_type&;
+        using iterator_category	= std::forward_iterator_tag;
+
+        startAt_view* m_view{};
+    private:
+        typename View::iterator m_iter{};
+
+        std::optional<bool> m_bInitialized;
+
+    public:
+        //constexpr iterator() = default;
+        constexpr iterator(typename View::iterator iter, startAt_view* f) :  m_iter{ iter }, m_view{ f } {
+        }
+        
+        constexpr void SetInit(bool bInit){
+            m_bInitialized = bInit;
+        }
+
+        constexpr reference operator*() const {  // <-- const important!
+            return *m_iter;
+        }
+
+        constexpr iterator& operator++() {
+            ++m_iter;
+            if (m_iter == m_view->m_view.end())
+            { 
+                m_iter = m_view->m_view.begin();
+                // std::cout << "circularity \n";
+            }       
+
+            m_bInitialized = true;
+            
+            return *this;
+        }
+
+        constexpr iterator operator++(int) const {
+            auto ret = *this;
+            ++(*this);
+            return ret;
+        }
+
+        // Must be friend
+        friend PRS_VIEWS_CONSTEXPR bool operator==(iterator const& lhs, iterator const& rhs) noexcept {
+            bool b = true;
+
+            // This may be the most important line in the view, begin is not init until ++ operator is called
+            // but end is initialized, then we avoid begin == end
+            if (lhs.m_bInitialized.has_value() && rhs.m_bInitialized.has_value())
+            {
+                b = lhs.m_bInitialized.value() == rhs.m_bInitialized.value();
+            }
+            
+            return (lhs.m_iter == rhs.m_iter) && b;
+        }
+        friend PRS_VIEWS_CONSTEXPR bool operator!=(iterator const& lhs, iterator const& rhs) noexcept {
+            return !(lhs == rhs);
+        }
+
+        constexpr bool operator==(typename View::iterator rhs) const {
+            return m_iter == rhs;
+        }
+        constexpr bool operator!=(typename View::iterator rhs) const {
+            return m_iter != rhs;
+        }
+    };
+
+    template<typename V, typename = std::enable_if_t<!std::is_same_v<std::remove_cv_t<std::remove_reference_t<V>>, startAt_view>>>
+    constexpr startAt_view(V&& v, startAt_func_t f) noexcept : 
+        m_view{std::forward<V>(v)}, 
+        m_func{ std::move(f) },
+        m_begin{ iterator{ m_view.begin(), this } }, 
+        m_end{ iterator{ m_view.end(), this } } 
+    {
+        static_assert(detail::is_range_view_v<V>, "startAt_view can only be constructed from a range!");
+    }
+
+    constexpr startAt_view(startAt_view const& rhs)
+        : m_view{ rhs.m_view },
+        m_func{ rhs.m_func },
+        m_begin{ iterator{ m_view.begin(), this } },
+        m_end{ iterator{ m_view.end(), this } }
+    {}
+    constexpr startAt_view& operator=(startAt_view const& rhs) {
+        startAt_view copy{ rhs };
+        copy.swap(*this);
+        return *this;
+    }
+    constexpr startAt_view(startAt_view&& rhs) noexcept :
+        m_view{std::move(rhs.m_view)}, 
+        m_func{ std::move(rhs.m_func) },
+        m_begin{ iterator{ m_view.begin(), this } }, 
+        m_end{ iterator{ m_view.end(), this } } 
+    {
+    }
+    constexpr startAt_view& operator=(startAt_view&& rhs) noexcept {
+        startAt_view copy{ std::move(rhs) };
+        copy.swap(*this);
+        return *this;
+    }
+    ~startAt_view() = default;
+
+    friend constexpr void swap(startAt_view& lhs, startAt_view& rhs) noexcept {
+        using std::swap;
+        swap(lhs.m_view, rhs.m_view);
+        swap(lhs.m_func, rhs.m_func);
+        swap(lhs.m_begin, rhs.m_begin);
+        swap(lhs.m_end, rhs.m_end);
+        lhs.m_begin.m_view = std::addressof(lhs);
+        lhs.m_end.m_view = std::addressof(lhs);
+        rhs.m_begin.m_view = std::addressof(rhs);
+        rhs.m_end.m_view = std::addressof(rhs);
+    }
+
+    constexpr auto begin() {
+        if (!m_start.has_value()) {
+            m_start = iterator{ m_view.begin(), this };
+            m_start = std::find_if(m_begin, m_end, std::cref(m_func));
+            m_start->SetInit(false);
+        }
+
+        return m_start.value();
+    }
+    constexpr auto end(){
+        if (!m_finish.has_value()) {
+            m_finish = iterator{ m_view.begin(), this };
+            m_finish = std::find_if(m_begin, m_end, std::cref(m_func));
+            m_finish->SetInit(true);
+        }
+        // std::cout << "end reached /n";
+        return m_finish.value();
+    }
+
+    constexpr const auto& underlying() const { return m_view; }
+};
+
+template<typename V>
+startAt_view(V) -> startAt_view<V>;
+
+
+template<typename Func>
+struct startAt_fn {
+    Func m_func{};
+
+    template<typename F>
+    constexpr startAt_fn(F f) : m_func{ std::move(f) } {}
+
+    template<typename View>
+    constexpr auto operator()(View&& v) const& {
+        using stripped_t = std::remove_reference_t<View>;
+        return startAt_view<all_view<stripped_t>>{ all_view<stripped_t>{ std::forward<View>(v) }, m_func };
+    }
+    template<typename View>
+    constexpr auto operator()(View&& v) && {
+        using stripped_t = std::remove_reference_t<View>;
+        return startAt_view<all_view<stripped_t>>{ all_view<stripped_t>{ std::forward<View>(v) }, std::move(m_func) };
+    }
+
+    template<typename R>
+    friend constexpr auto operator|(R&& r, startAt_fn const& fn) {
+        return fn(std::forward<R>(r));
+    }
+    template<typename R>
+    friend constexpr auto operator|(R&& r, startAt_fn&& fn) {
+        return std::move(fn)(std::forward<R>(r));
+    }
+};
+
+template<typename Func>
+constexpr auto startAt(Func p) {
+    return startAt_fn<Func>{ std::move(p) };
+}
+
+/******************************************/
 
 /******************************************/
 /* zip_view                               */
