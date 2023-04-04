@@ -1,6 +1,7 @@
 #include <type_traits>
 #include <iostream>
 #include <vector>
+#include <map>
 #include <functional>
 #include <optional>
 
@@ -650,23 +651,29 @@ public:
 
     constexpr auto begin() {
         if (!m_start.has_value()) {
-            m_start = iterator{ m_view.begin(), this };
-            m_start = std::find_if(m_begin, m_end, std::cref(m_func));
-            m_start->SetInit(false);
+            _subGetLimitIter(m_start, false);
         }
 
         return m_start.value();
     }
     constexpr auto end(){
         if (!m_finish.has_value()) {
-            m_finish = iterator{ m_view.begin(), this };
-            m_finish = std::find_if(m_begin, m_end, std::cref(m_func));
-            m_finish->SetInit(true);
+            _subGetLimitIter(m_finish, true);
         }
         // std::cout << "end reached /n";
         return m_finish.value();
     }
 
+private:
+    constexpr auto _subGetLimitIter(std::optional<iterator>& iter, bool b){
+        iter = iterator{ m_view.begin(), this };
+        iter = std::find_if(m_begin, m_end, std::cref(m_func));
+        if (iter == m_end)
+            iter = m_begin;
+        iter->SetInit(b);
+    }
+
+public:
     constexpr const auto& underlying() const { return m_view; }
 };
 
@@ -895,10 +902,28 @@ int main() {
         std::cout << i << "," << j <<"\n";
     }
 
+    std::cout << "\n";
+
     std::vector<int> ar1{ 1,2,3};
     std::vector<int> ar2{ 4,5,6};
     for (auto [a,b] : zip(ar1,ar2)) {
         std::cout << a << " " << b << "\n";
     }
+
+    std::cout << "\n";
+
+    std::map<int, int> m {};
+
+    for (auto i = 0; i < 11; ++i)
+        m.emplace(2 * i, 20 * i);
+
+    auto pp = m | 
+    startAt([&m](auto const& iter) { return iter == *(m.lower_bound(6));})
+//    | transform([](auto& i) {return std::make_pair(0.5 * i.first, 0.5 * i.second);})
+//    | startAt([&m](auto const& iter) { return iter.first == 7;})
+    ;
+    
+    for (auto const& [k, v] : pp)
+        std::cout << k << "," << v <<"\n";
     
 }
